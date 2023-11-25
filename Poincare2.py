@@ -1,9 +1,10 @@
-from math import sin, cos, sqrt, pi
+import random as rd
+from math import sin, cos, sqrt, pi, tan, atan, tanh, atanh
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from Euclidian import *
+from Euclidean import *
 
 
 def init():
@@ -20,6 +21,40 @@ def init():
     return ax
 
 
+# global config
+hyperbolic = True
+a2 = -1 if hyperbolic else 1
+ax = init()
+plot_list = []
+
+
+def setHyperbolic(tf: bool):
+    global hyperbolic, a2
+    hyperbolic = tf
+    a2 = -1 if hyperbolic else 1
+
+
+def safe_atanh(x):
+    if x >= 1:
+        return math.inf
+    else:
+        return atanh(x)
+
+
+def tg(x):
+    if hyperbolic:
+        return tanh(x)
+    else:
+        return tan(x)
+
+
+def atg(x):
+    if hyperbolic:
+        return safe_atanh(x)
+    else:
+        return atan(x)
+
+
 class Mobius:
     def __init__(self, u: complex):
         self.u = u
@@ -28,7 +63,7 @@ class Mobius:
         return obj.mobius(self)
 
     def f(self, z):
-        return (self.u + z) / (1 - (self.u.conjugate() * z) / _a2)
+        return (self.u + z) / (1 - (self.u.conjugate() * z) / a2)
 
     @classmethod
     def movePointToOrigin(cls, p: 'Point'):
@@ -36,6 +71,9 @@ class Mobius:
 
     def transform(self, *objs):
         return list(map(lambda x: x.mobius(self), objs))
+
+    def inv(self):
+        return Mobius(-self.u)
 
 
 class Point:
@@ -45,10 +83,10 @@ class Point:
         self.name = name
         self.x = r * cos(phi)
         self.y = r * sin(phi)
-        if show: _plot_list.append(self)
+        if show: plot_list.append(self)
 
     def valid(self):
-        if _hyperbolic:
+        if hyperbolic:
             return self.r <= 1
         else:
             return True
@@ -74,7 +112,7 @@ class Point:
         return self
 
     def setPlot(self):
-        _plot_list.append(self)
+        plot_list.append(self)
         return self
 
     def mobius(self, mob: Mobius):
@@ -89,11 +127,11 @@ class GeodesicTwoPoints:
         self.p2 = p2
         x1, y1 = p1.x, p1.y
         x2, y2 = p2.x, p2.y
-        self.lamda = (_a2 + x1 * x2 + y1 * y2) / (x2 * y1 - x1 * y2)
+        self.lamda = (a2 + x1 * x2 + y1 * y2) / (x2 * y1 - x1 * y2)
         self.Xc = -(self.lamda * (y1 - y2) - (x1 + x2)) / 2
         self.Yc = -(self.lamda * (x2 - x1) - (y1 + y2)) / 2
         self.Radius = 1 / 2 * sqrt(((x1 - x2) ** 2 + (y1 - y2) ** 2) * (1 + self.lamda ** 2))
-        if show: _plot_list.append(self)
+        if show: plot_list.append(self)
 
     def plot(self, ax):
         draw_circle = plt.Circle((self.Xc, self.Yc), self.Radius, fill=False, color='blue')
@@ -118,7 +156,7 @@ class GeodesicTwoPoints:
     def toEuclidian(self):
         return self.Xc, self.Yc, self.Radius
 
-    def intersect(self, other):
+    def intersect(self, other) -> list[Point]:
         if isinstance(other, GeodesicTwoPoints):
             points = find_intersections_two_circles(self.toEuclidian(), other.toEuclidian())
             lst = [Point.fromXY(p) for p in points]
@@ -130,11 +168,18 @@ class GeodesicTwoPoints:
             lst = list(filter(lambda x: x.valid(), lst))
             return lst
 
+    def infinityPoints(self) -> (Point, Point):
+        points = find_intersections_two_circles(self.toEuclidian(), (0, 0, 1))
+        return tuple([Point.fromXY(p) for p in points])
+
+    def proportionalDivisionPoint(self, prop):
+        return ProportionalDivisionPoint(self.p1, self.p2, prop)
+
 
 class GeodesicThroughOrigin:
     def __init__(self, angle, show=True):
         self.angle = angle
-        if show: _plot_list.append(self)
+        if show: plot_list.append(self)
 
     @classmethod
     def fromPoint(cls, p: Point, show=True):
@@ -157,88 +202,102 @@ class GeodesicThroughOrigin:
             if len(lst) > 0:
                 return lst[0]
             else:
-                raise ValueError
+                raise ValueError('No intersection: hyper parallel.')
         if isinstance(other, GeodesicThroughOrigin):
             return Point.fromXY((0, 0))
 
 
-# global config
-_hyperbolic = False
-_a2 = -1 if _hyperbolic else 1
-ax = init()
-_plot_list = []
+class Polygon:
+    p: list[Point]
+    edges: list[GeodesicTwoPoints]
+
+    def __init__(self, *points: tuple, names=None):
+        if names is not None:
+            names = names.split(' ')
+        else:
+            names = [None] * len(points)
+        assert len(names) == len(points)
+        self.p = [Point(points[i][0], points[i][1], names[i]) for i in range(len(points))]
+        self.edges = []
+        for i in range(len(self.p)):
+            self.edges.append(GeodesicTwoPoints(self.p[i], self.p[(i + 1) % len(self.p)]))
+
+    @classmethod
+    def fromPoints(cls, *points: Point):
+        lst = [(p.r, p.phi) for p in points]
+        return cls(*lst)
+
+
+class Circle:
+    def __init__(self, center: Point, radius, show=True):
+        self.center = center
+        rho = tg(radius)
+        self.rho = rho
+        R2 = center.r ** 2
+        self.Xc = a2 * (a2 + rho ** 2) / (1 - R2 * rho ** 2) * center.x
+        self.Yc = a2 * (a2 + rho ** 2) / (1 - R2 * rho ** 2) * center.y
+        self.Radius = (a2 + R2) * rho / abs((1 - R2 * rho ** 2))
+        if show: plot_list.append(self)
+
+    def plot(self, ax):
+        draw_circle = plt.Circle((self.Xc, self.Yc), self.Radius, fill=False, color='green')
+        ax.add_artist(draw_circle)
+
+    def point(self, angle):
+        phi = angle
+        p = Point(self.rho, phi, show=False)
+        mob = Mobius.movePointToOrigin(self.center).inv()
+        p = p.mobius(mob)
+        return p
+
+    def arbitraryPoint(self, angle_range=None):
+        if angle_range is None:
+            angle_range = (0, 2 * pi)
+        phi = rd.uniform(*angle_range)
+        return self.point(phi)
+
+    def arbitraryPoints(self, names: str, angle_range=None):
+        if angle_range is None:
+            angle_range = (0, 2 * pi)
+        names = names.split(' ')
+        ranges = np.linspace(*angle_range, len(names) + 1)
+        lst = []
+        for i in range(len(names)):
+            rg = (ranges[i], ranges[i + 1])
+            lst.append(self.arbitraryPoint(rg).setName(names[i]))
+        return lst
+
+
+def ProportionalDivisionPoint(a: Point, b: Point, prop):
+    mob = Mobius.movePointToOrigin(a)
+    b_prime = b.mobius(mob)
+    r, phi = b_prime.r, b_prime.phi
+    k = prop
+    c = Point(tg(k * atg(r)), phi, show=False)
+    return c.mobius(mob.inv())
+
+
+def Midpoint(a: Point, b: Point):
+    return ProportionalDivisionPoint(a, b, 0.5)
+
+
+def Links(dic: dict) -> list[GeodesicTwoPoints]:
+    lines = []
+    for k in dic.keys():
+        for end in dic[k]:
+            lines.append(GeodesicTwoPoints(k, end))
+    return lines
 
 
 def show_all():
-    for obj in _plot_list:
+    for obj in plot_list:
         obj.plot(ax)
     plt.show()
 
 
 def clear_all():
-    _plot_list.clear()
+    plot_list.clear()
 
 
 def plot(*objs):
-    _plot_list.extend(list(objs))
-
-
-"""
-if __name__ == '__main__':
-    a = Point(1, -pi / 6, 'A')
-    b = Point(1, pi / 3, 'B')
-    c = Point(1, pi, 'C')
-    ab = GeodesicTwoPoints(a, b)
-    bc = GeodesicTwoPoints(b, c)
-    ca = GeodesicTwoPoints(c, a)
-    jab = GeodesicThroughOrigin(pi / 4, show=False)
-    jbc = GeodesicThroughOrigin(8 * pi / 5, show=False)
-    jca = GeodesicThroughOrigin(-pi / 3, show=False)
-    p = jab.intersect(ab).setName('P').setPlot()
-    q = jbc.intersect(bc).setName('Q').setPlot()
-    r = jca.intersect(ca).setName('R').setPlot()
-    pq = GeodesicTwoPoints(p, q)
-    qr = GeodesicTwoPoints(q, r)
-    rp = GeodesicTwoPoints(r, p)
-
-    clear_all()
-    mob = Mobius.movePointToOrigin(p)
-    lst = mob.transform(a, b, c, p, ab, bc, ca, p, q, r, pq, qr, rp)
-    plot(*lst)
-    '''
-    clear_all()
-    mob = Mobius.movePointToOrigin(q)
-    lst = mob.transform(a, c, p, ca, p, q, r, pc, qa, rb)
-    plot(*lst)
-    '''
-    show_all()
-"""
-if __name__ == '__main__':
-    a = Point(0.5, -pi / 6, 'P')
-    b = Point(0.6, pi / 3, 'Q')
-    c = Point(0.6, pi, 'R')
-    o = Point(0, 0, show=False)
-    ab = GeodesicTwoPoints(a, b)
-    bc = GeodesicTwoPoints(b, c)
-    ca = GeodesicTwoPoints(c, a)
-    # unit = GeodesicTwoPoints(Point(1, 1, show=False), Point(1, 2, show=False))
-    p = ab.intersect(ca)[1].setName('A').setPlot()
-    q = bc.intersect(ab)[1].setName('B').setPlot()
-    r = ca.intersect(bc)[1].setName('C').setPlot()
-    '''
-    pq = GeodesicTwoPoints(p, q)
-    qr = GeodesicTwoPoints(q, r)
-    rp = GeodesicTwoPoints(r, p)
-    '''
-    clear_all()
-    mob = Mobius.movePointToOrigin(a)
-    lst = mob.transform(a, b, c, ab, bc, ca, q, r)
-    plot(*lst)
-
-    '''
-    clear_all()
-    mob = Mobius.movePointToOrigin(q)
-    lst = mob.transform(a, c, p, ca, p, q, r, pc, qa, rb)
-    plot(*lst)
-    '''
-    show_all()
+    plot_list.extend(list(objs))
